@@ -249,7 +249,7 @@ if st.session_state.analysis_result:
     st.write("### 📈 Section Feedback")
     df = pd.DataFrame(results_data)
     df.index = range(1, len(df) + 1)
-    st.table(df)
+    st.dataframe(df, use_container_width=True)
 
     c1, c2 = st.columns(2)
     fb = res.get('feedback', {})
