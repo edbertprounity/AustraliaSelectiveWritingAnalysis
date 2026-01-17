@@ -1,0 +1,256 @@
+import streamlit as st
+from groq import Groq
+import json
+import time
+from dotenv import load_dotenv
+import os
+import pandas as pd
+import random
+
+# --- SETUP ---
+load_dotenv()
+client = Groq(api_key=os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY"))
+
+# --- CONFIG ---
+st.set_page_config(page_title="Selective Master AI", layout="wide")
+
+# Custom CSS
+st.markdown("""
+    <style>
+    .main { background-color: #f8fafc; }
+    .stTextArea textarea { font-size: 1.15rem !important; border-radius: 10px; line-height: 1.6; }
+    .locked-box { background-color: #f1f5f9; border: 2px dashed #cbd5e1; padding: 80px 20px; text-align: center; border-radius: 15px; color: #64748b; margin-top: 50px; }
+    .result-container { background-color: #ffffff; padding: 30px; border-radius: 15px; border: 1px solid #e2e8f0; margin-top: 30px; }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- TOPIC BANK (20 items) ---
+TOPIC_BANK = [
+    {"title": "Chaos on the Beach", "type": "Newspaper Report", "prompt": "A shipping container with party accessories washed up and burst open. Write a newspaper report on the impact and crowd reaction."},
+    {"title": "New Student Welcome", "type": "Advice Sheet", "prompt": "Write an advice sheet for three new students to make them feel enthusiastic about your school and local area."},
+    {"title": "The Last Tree", "type": "Creative Narrative", "prompt": "In a world made of concrete, someone finds a single living tree. Describe the discovery."},
+    {"title": "Mandatory Volunteering", "type": "Persuasive", "prompt": "Should high school students be required to complete 50 hours of community service to graduate?"},
+    {"title": "AI in Art", "type": "Discussion", "prompt": "Can a computer truly create 'art', or is art something only humans can produce?"},
+    {"title": "The Underground City", "type": "Creative Narrative", "prompt": "You discover a trapdoor in your basement leading to a city that has been hidden for centuries."},
+    {"title": "Space Tourism", "type": "Persuasive", "prompt": "Is spending billions on space tourism ethical while there is poverty on Earth?"},
+    {"title": "Digital Detox", "type": "Advice Sheet", "prompt": "Create a guide for teenagers on how to spend a weekend without any electronic devices."},
+    {"title": "The Silent Library", "type": "Mystery", "prompt": "Every book in the school library has suddenly become blank. Write a report on this strange incident."},
+    {"title": "Animal Rights", "type": "Persuasive", "prompt": "Should animals be used in competitive sports like horse racing or greyhound racing?"},
+    {"title": "A Letter from 2126", "type": "Creative", "prompt": "You find a letter written by a student 100 years in the future. What does it say about their world?"},
+    {"title": "The Secret of the Reef", "type": "Narrative", "prompt": "While snorkeling, you find an object that definitely doesn't belong in the ocean."},
+    {"title": "Video Games in School", "type": "Persuasive", "prompt": "Should video games be used as a primary teaching tool in modern classrooms?"},
+    {"title": "The Great Migration", "type": "Informative", "prompt": "Write a feature article about why people are moving from cities to rural country towns."},
+    {"title": "Invisibility Cloak", "type": "Creative", "prompt": "You wake up with the ability to be invisible, but only for 10 minutes at a time. Describe your day."},
+    {"title": "Plastic-Free Future", "type": "Persuasive", "prompt": "Should the government ban all single-use plastics immediately, regardless of the cost?"},
+    {"title": "The Olympic Host", "type": "Discussion", "prompt": "Does hosting the Olympic Games actually benefit a city, or is it a financial burden?"},
+    {"title": "First Contact", "type": "Narrative", "prompt": "The first alien message is received, but it's not a greeting—it's a warning."},
+    {"title": "Voting at 16", "type": "Persuasive", "prompt": "Should the legal voting age be lowered to 16 to give youth a voice in climate policy?"},
+    {"title": "The Memory Shop", "type": "Creative", "prompt": "You find a shop that sells memories. Which one do you buy, and what happens next?"}
+]
+
+# --- GRADING LOGIC ---
+def get_level(score, max_val):
+    pct = (score / max_val) * 10
+    if pct >= 8: return "More Than Adequate", 3
+    if pct >= 5.5: return "Adequate", 2
+    if pct >= 4.5: return "Just Adequate", 1
+    return "Not Adequate", 0
+
+def calculate_award(levels, scores):
+    mta = levels.count(3)
+    adq = levels.count(2)
+    jad = levels.count(1)
+    nad = levels.count(0)
+    
+    # Mathematical Override: Content score < 6 cannot be HD
+    content_score = scores.get('Content', 0)
+    
+    if mta >= 2 and (mta + adq) == 4 and content_score >= 6: return "🏆 High Distinction"
+    if mta >= 1 and (mta + adq) == 4: return "🏅 Distinction"
+    if adq >= 2 and (adq + jad + mta) == 4: return "📜 Credit"
+    if nad == 0: return "✅ Pass"
+    
+    if nad == 1: return "❌ F3 (One Failed)"
+    if nad == 2: return "❌ F2 (Two Failed)"
+    if nad == 3: return "❌ F1 (Three Failed)"
+    return "💀 F0 (Everything Failed)"
+
+# --- SESSION STATE ---
+if 'test_active' not in st.session_state: st.session_state.test_active = False
+if 'start_time' not in st.session_state: st.session_state.start_time = None
+if 'current_topic' not in st.session_state: st.session_state.current_topic = None
+if 'analysis_result' not in st.session_state: st.session_state.analysis_result = None
+if 'submitted_essay' not in st.session_state: st.session_state.submitted_essay = None
+
+# --- TIMER ---
+@st.fragment(run_every=1.0)
+def timer_ui(timed_mode):
+    if st.session_state.test_active and timed_mode:
+        elapsed = time.time() - st.session_state.start_time
+        remaining = max(0, (30 * 60) - elapsed)
+        mins, secs = divmod(int(remaining), 60)
+        st.metric("⏳ Time Remaining", f"{mins:02d}:{secs:02d}")
+        if remaining <= 0:
+            st.session_state.test_active = False
+            st.rerun()
+
+# --- SIDEBAR ---
+with st.sidebar:
+    st.header("⚙️ Settings & Rules")
+    st.markdown("""
+    **Award Thresholds:**
+    - **HD**: 2x More than Adequate, rest Adequate.
+    - **D**: 1x More than Adequate, rest Adequate.
+    - **C**: 2x Adequate, rest Just Adequate.
+    - **Pass**: All at least Just Adequate.
+    
+    **Levels (Scaled to 10):**
+    - **8.0+**: More Than Adequate
+    - **5.5 - 7.9**: Adequate
+    - **4.5 - 5.4**: Just Adequate
+    - **Below 4.5**: Not Adequate
+    """)
+    mode = st.radio("Exam Mode:", ["Timed (30 mins)", "Unlimited Practice"])
+    is_timed = "Timed" in mode
+    
+    if not st.session_state.test_active:
+        if st.button("🚀 START EXAM", type="primary", use_container_width=True):
+            st.session_state.current_topic = random.choice(TOPIC_BANK)
+            st.session_state.start_time = time.time()
+            st.session_state.test_active = True
+            st.session_state.analysis_result = None
+            st.session_state.submitted_essay = None
+            st.rerun()
+    else:
+        if st.button("🛑 Reset Everything", use_container_width=True):
+            st.session_state.test_active = False
+            st.session_state.submitted_essay = None
+            st.rerun()
+
+# --- MAIN UI ---
+st.title("🚀 Selective Master AI")
+
+if not st.session_state.test_active and st.session_state.analysis_result is None:
+    st.markdown('<div class="locked-box"><h1>Exam Paper Face Down</h1><p>Start from the sidebar.</p></div>', unsafe_allow_html=True)
+
+elif st.session_state.test_active or st.session_state.analysis_result:
+    t_col1, t_col2 = st.columns([3, 1])
+    with t_col1:
+        st.subheader(f"Topic: {st.session_state.current_topic['title']}")
+        st.info(f"**Task:** {st.session_state.current_topic['prompt']}")
+    with t_col2: 
+        if st.session_state.test_active:
+            timer_ui(is_timed)
+
+    if st.session_state.test_active:
+        essay_input = st.text_area("Your Response:", height=500)
+        wc = len(essay_input.split())
+        st.markdown(f"**Word Count:** `{wc}`")
+        
+        if st.button("🏁 Finish & Grade", type="primary"):
+            with st.spinner("Strict Marking..."):
+                try:
+                    st.session_state.submitted_essay = essay_input
+                    chat_completion = client.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        response_format={"type": "json_object"},
+                        messages=[
+                            {
+                                "role": "system", 
+                                "content": """You are an ELITE and CRITICAL NSW Selective School Writing Examiner and high-performance coach. 
+                                Your grading is harsh, pedantic, and high-stakes. 
+                                
+                                STRICT GRADING RULES:
+                                1. LANGUAGE: If vocabulary is basic (e.g., 'stuff', 'nice', 'bad', 'scared', 'big'), Language score MUST NOT exceed 2/5.
+                                2. CONTENT: If the story is a simple chronological recount ('I did this, then that') without deep sensory imagery or emotional resonance, Content MUST NOT exceed 3/8.
+                                3. STRUCTURE: Award 4/4 only if there is a sophisticated hook, seamless transitions, and a powerful resolution.
+                                4. ACCURACY: One single comma splice or tense shift drops Accuracy to 2/3. Three or more errors drop it to 1/3.
+                                
+                                JSON RULES: 
+                                1. In the 'scores' object, provide ONLY the raw integer (e.g., 6). 
+                                2. DO NOT include the maximum value or fractions (e.g., DO NOT write 6/8).
+                                REQUIRED JSON STRUCTURE:
+                                {
+                                "scores": {"Content": 0, "Structure": 0, "Language": 0, "Accuracy": 0},
+                                "feedback": {"strengths": [], "weaknesses": []},
+                                "recommendations": [
+                                    {"original": "weak sentence from the essay", "improvement": "selective-level rewrite", "reason": "why this change matters"}
+                                ],
+                                "selective_upgrade": "A full 3-sentence rewrite of the most critical paragraph to show HD quality."
+                                }
+                                
+                                If scores are maxed, weaknesses can be empty. If scores are zero, strengths can be empty."""
+                            },
+                            {"role": "user", "content": f"Topic: {st.session_state.current_topic['prompt']}\nEssay: {essay_input}"}
+                        ]
+                    )
+                    st.session_state.analysis_result = json.loads(chat_completion.choices[0].message.content)
+                    st.session_state.test_active = False
+                    st.rerun()
+                except Exception as e: st.error(f"Error: {e}")
+    else:
+        # Display the submitted answer
+        st.text_area("Your Response:", value=st.session_state.get('submitted_essay', ''), height=500, disabled=True)
+        wc = len(st.session_state.get('submitted_essay', '').split())
+        st.markdown(f"**Word Count:** `{wc}`")
+
+# --- RESULTS ---
+if st.session_state.analysis_result:
+    res = st.session_state.analysis_result
+    scores = res.get('scores', {})
+    
+    # Calculate Levels
+    results_data = []
+    level_values = []
+    total_raw = 0
+    for cat, max_val in [("Content", 8), ("Structure", 4), ("Language", 5), ("Accuracy", 3)]:
+        val = scores.get(cat, 0)
+        label, rank = get_level(val, max_val)
+        results_data.append({"Criteria": cat, "Score": val, "Max": max_val, "Level": label})
+        level_values.append(rank)
+        total_raw += val
+
+    award = calculate_award(level_values, scores)
+    
+    st.divider()
+    st.markdown('<div class="result-container">', unsafe_allow_html=True)
+    st.header("📊 Final Marking Report")
+    
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Overall Award", award)
+    m2.metric("Total Score", f"{total_raw}/20")
+    m3.metric("Status", "Complete")
+
+    st.write("### 📈 Section Feedback")
+    df = pd.DataFrame(results_data)
+    df.index = range(1, len(df) + 1)
+    st.table(df)
+
+    c1, c2 = st.columns(2)
+    fb = res.get('feedback', {})
+    if isinstance(fb, list):
+        strengths = fb[0] if len(fb) > 0 else []
+        weaknesses = fb[1] if len(fb) > 1 else []
+    else:
+        strengths = fb.get('strengths', [])
+        weaknesses = fb.get('weaknesses', [])
+    with c1: st.success("**Strengths**\n" + "\n".join([f"- {s}" for s in strengths]))
+    with c2: st.error("**Weaknesses**\n" + "\n".join([f"- {w}" for w in weaknesses]))
+
+    st.write("### 🔧 Specific Recommendations")
+    recommendations = res.get('recommendations', [])
+    if recommendations:
+        for i, rec in enumerate(recommendations, 1):
+            st.markdown(f"**{i}. Original:** {rec.get('original', '')}")
+            st.markdown(f"**Improved:** {rec.get('improvement', '')}")
+            st.markdown(f"**Reason:** {rec.get('reason', '')}")
+            st.markdown("---")
+    else:
+        st.write("No specific recommendations provided.")
+
+    st.info(f"**HD Quality Rewrite:**\n{res.get('selective_upgrade', '')}")
+    st.markdown('</div>', unsafe_allow_html=True)
+    if st.button("🆕 New Practice"):
+        st.session_state.analysis_result = None
+        st.session_state.submitted_essay = None
+        st.rerun()
