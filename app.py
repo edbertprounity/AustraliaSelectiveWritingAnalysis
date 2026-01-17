@@ -25,28 +25,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- TOPIC BANK (20 items) ---
-TOPIC_BANK = [
-    {"title": "Chaos on the Beach", "type": "Newspaper Report", "prompt": "A shipping container with party accessories washed up and burst open. Write a newspaper report on the impact and crowd reaction."},
-    {"title": "New Student Welcome", "type": "Advice Sheet", "prompt": "Write an advice sheet for three new students to make them feel enthusiastic about your school and local area."},
-    {"title": "The Last Tree", "type": "Creative Narrative", "prompt": "In a world made of concrete, someone finds a single living tree. Describe the discovery."},
-    {"title": "Mandatory Volunteering", "type": "Persuasive", "prompt": "Should high school students be required to complete 50 hours of community service to graduate?"},
-    {"title": "AI in Art", "type": "Discussion", "prompt": "Can a computer truly create 'art', or is art something only humans can produce?"},
-    {"title": "The Underground City", "type": "Creative Narrative", "prompt": "You discover a trapdoor in your basement leading to a city that has been hidden for centuries."},
-    {"title": "Space Tourism", "type": "Persuasive", "prompt": "Is spending billions on space tourism ethical while there is poverty on Earth?"},
-    {"title": "Digital Detox", "type": "Advice Sheet", "prompt": "Create a guide for teenagers on how to spend a weekend without any electronic devices."},
-    {"title": "The Silent Library", "type": "Mystery", "prompt": "Every book in the school library has suddenly become blank. Write a report on this strange incident."},
-    {"title": "Animal Rights", "type": "Persuasive", "prompt": "Should animals be used in competitive sports like horse racing or greyhound racing?"},
-    {"title": "A Letter from 2126", "type": "Creative", "prompt": "You find a letter written by a student 100 years in the future. What does it say about their world?"},
-    {"title": "The Secret of the Reef", "type": "Narrative", "prompt": "While snorkeling, you find an object that definitely doesn't belong in the ocean."},
-    {"title": "Video Games in School", "type": "Persuasive", "prompt": "Should video games be used as a primary teaching tool in modern classrooms?"},
-    {"title": "The Great Migration", "type": "Informative", "prompt": "Write a feature article about why people are moving from cities to rural country towns."},
-    {"title": "Invisibility Cloak", "type": "Creative", "prompt": "You wake up with the ability to be invisible, but only for 10 minutes at a time. Describe your day."},
-    {"title": "Plastic-Free Future", "type": "Persuasive", "prompt": "Should the government ban all single-use plastics immediately, regardless of the cost?"},
-    {"title": "The Olympic Host", "type": "Discussion", "prompt": "Does hosting the Olympic Games actually benefit a city, or is it a financial burden?"},
-    {"title": "First Contact", "type": "Narrative", "prompt": "The first alien message is received, but it's not a greeting—it's a warning."},
-    {"title": "Voting at 16", "type": "Persuasive", "prompt": "Should the legal voting age be lowered to 16 to give youth a voice in climate policy?"},
-    {"title": "The Memory Shop", "type": "Creative", "prompt": "You find a shop that sells memories. Which one do you buy, and what happens next?"}
-]
+
+def load_topics():
+    try:
+        with open('topics.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        # Fallback if file is missing
+        return [{"title": "Error", "type": "N/A", "prompt": "topics.json not found."}]
+    
+TOPIC_BANK = load_topics()
 
 # --- GRADING LOGIC ---
 def get_level(score, max_val):
