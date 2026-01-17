@@ -125,7 +125,7 @@ elif st.session_state.test_active or st.session_state.analysis_result:
     t_col1, t_col2 = st.columns([3, 1])
     with t_col1:
         st.subheader(f"Topic: {st.session_state.current_topic['title']}")
-        st.info(f"**Task:** {st.session_state.current_topic['prompt']}")
+        st.text(f"Task: {st.session_state.current_topic['prompt']}")
     with t_col2: 
         if st.session_state.test_active:
             timer_ui(is_timed)
@@ -138,43 +138,52 @@ elif st.session_state.test_active or st.session_state.analysis_result:
         if st.button("🏁 Finish & Grade", type="primary"):
             with st.spinner("Strict Marking..."):
                 try:
-                    st.session_state.submitted_essay = essay_input
-                    chat_completion = client.chat.completions.create(
-                        model="llama-3.1-8b-instant",
-                        response_format={"type": "json_object"},
-                        messages=[
-                            {
-                                "role": "system", 
-                                "content": """You are an ELITE and CRITICAL NSW Selective School Writing Examiner and high-performance coach. 
-                                Your grading is harsh, pedantic, and high-stakes. 
-                                
-                                STRICT GRADING RULES:
-                                1. LANGUAGE: If vocabulary is basic (e.g., 'stuff', 'nice', 'bad', 'scared', 'big'), Language score MUST NOT exceed 2/5.
-                                2. CONTENT: If the story is a simple chronological recount ('I did this, then that') without deep sensory imagery or emotional resonance, Content MUST NOT exceed 3/8.
-                                3. STRUCTURE: Award 4/4 only if there is a sophisticated hook, seamless transitions, and a powerful resolution.
-                                4. ACCURACY: One single comma splice or tense shift drops Accuracy to 2/3. Three or more errors drop it to 1/3.
-                                
-                                JSON RULES: 
-                                1. In the 'scores' object, provide ONLY the raw integer (e.g., 6). 
-                                2. DO NOT include the maximum value or fractions (e.g., DO NOT write 6/8).
-                                REQUIRED JSON STRUCTURE:
+                    if not essay_input.strip():
+                        st.error("Please write something before submitting.")
+                    elif len(essay_input.split()) < 10:
+                        st.error("Please write at least 10 words before submitting.")
+                    else:
+                        st.session_state.submitted_essay = essay_input
+                        chat_completion = client.chat.completions.create(
+                            model="llama-3.1-8b-instant",
+                            response_format={"type": "json_object"},
+                            messages=[
                                 {
-                                "scores": {"Content": 0, "Structure": 0, "Language": 0, "Accuracy": 0},
-                                "feedback": {"strengths": [], "weaknesses": []},
-                                "recommendations": [
-                                    {"original": "weak sentence from the essay", "improvement": "selective-level rewrite", "reason": "why this change matters"}
-                                ],
-                                "selective_upgrade": "A full 3-sentence rewrite of the most critical paragraph to show HD quality."
-                                }
-                                
-                                If scores are maxed, weaknesses can be empty. If scores are zero, strengths can be empty."""
-                            },
-                            {"role": "user", "content": f"Topic: {st.session_state.current_topic['prompt']}\nEssay: {essay_input}"}
-                        ]
-                    )
-                    st.session_state.analysis_result = json.loads(chat_completion.choices[0].message.content)
-                    st.session_state.test_active = False
-                    st.rerun()
+                                    "role": "system", 
+                                    "content": """You are an ELITE and CRITICAL NSW Selective School Writing Examiner and high-performance coach. 
+                                    Your grading is harsh, pedantic, and high-stakes. 
+                                    
+                                    STRICT GRADING RULES:
+                                    1. LANGUAGE: If vocabulary is basic (e.g., 'stuff', 'nice', 'bad', 'scared', 'big'), Language score MUST NOT exceed 2/5.
+                                    2. CONTENT: If the story is a simple chronological recount ('I did this, then that') without deep sensory imagery or emotional resonance, Content MUST NOT exceed 3/8.
+                                    3. STRUCTURE: Award 4/4 only if there is a sophisticated hook, seamless transitions, and a powerful resolution.
+                                    4. ACCURACY: One single comma splice or tense shift drops Accuracy to 2/3. Three or more errors drop it to 1/3.
+                                    
+                                    REQUIRED JSON STRUCTURE:
+                                    {
+                                    "scores": {
+                                        "Content": {"score": 0, "reason": "why this score", "improvement": "how to improve"},
+                                        "Structure": {"score": 0, "reason": "why this score", "improvement": "how to improve"},
+                                        "Language": {"score": 0, "reason": "why this score", "improvement": "how to improve"},
+                                        "Accuracy": {"score": 0, "reason": "why this score", "improvement": "how to improve"}
+                                    },
+                                    "feedback": {"strengths": [], "weaknesses": []},
+                                    "paragraph_rewrite": "full paragraph rewrite if total score <16, else empty string"
+                                    }
+                                    
+                                    If scores are maxed, weaknesses can be empty. If scores are zero, strengths can be empty."""
+                                },
+                                {"role": "user", "content": f"Topic: {st.session_state.current_topic['prompt']}\nEssay: {essay_input}"}
+                            ]
+                        )
+                        response_text = chat_completion.choices[0].message.content
+                        try:
+                            st.session_state.analysis_result = json.loads(response_text)
+                        except json.JSONDecodeError:
+                            st.error(f"Failed to parse AI response. Response: {response_text}")
+                        else:
+                            st.session_state.test_active = False
+                            st.rerun()
                 except Exception as e: st.error(f"Error: {e}")
     else:
         # Display the submitted answer
@@ -185,7 +194,10 @@ elif st.session_state.test_active or st.session_state.analysis_result:
 # --- RESULTS ---
 if st.session_state.analysis_result:
     res = st.session_state.analysis_result
-    scores = res.get('scores', {})
+    scores_raw = res.get('scores', {})
+    
+    # Extract scores
+    scores = {k: v['score'] if isinstance(v, dict) else v for k, v in scores_raw.items()}
     
     # Calculate Levels
     results_data = []
@@ -194,7 +206,9 @@ if st.session_state.analysis_result:
     for cat, max_val in [("Content", 8), ("Structure", 4), ("Language", 5), ("Accuracy", 3)]:
         val = scores.get(cat, 0)
         label, rank = get_level(val, max_val)
-        results_data.append({"Criteria": cat, "Score": val, "Max": max_val, "Level": label})
+        reason = scores_raw.get(cat, {}).get('reason', '') if isinstance(scores_raw.get(cat), dict) else ''
+        improvement = scores_raw.get(cat, {}).get('improvement', '') if isinstance(scores_raw.get(cat), dict) else ''
+        results_data.append({"Criteria": cat, "Score": val, "Max": max_val, "Level": label, "Reason": reason, "Improvement": improvement})
         level_values.append(rank)
         total_raw += val
 
@@ -225,18 +239,11 @@ if st.session_state.analysis_result:
     with c1: st.success("**Strengths**\n" + "\n".join([f"- {s}" for s in strengths]))
     with c2: st.error("**Weaknesses**\n" + "\n".join([f"- {w}" for w in weaknesses]))
 
-    st.write("### 🔧 Specific Recommendations")
-    recommendations = res.get('recommendations', [])
-    if recommendations:
-        for i, rec in enumerate(recommendations, 1):
-            st.markdown(f"**{i}. Original:** {rec.get('original', '')}")
-            st.markdown(f"**Improved:** {rec.get('improvement', '')}")
-            st.markdown(f"**Reason:** {rec.get('reason', '')}")
-            st.markdown("---")
-    else:
-        st.write("No specific recommendations provided.")
+    paragraph_rewrite = res.get('paragraph_rewrite', '')
+    if paragraph_rewrite and total_raw < 16:
+        st.write("### 🔧 Paragraph Rewrite")
+        st.info(paragraph_rewrite)
 
-    st.info(f"**HD Quality Rewrite:**\n{res.get('selective_upgrade', '')}")
     st.markdown('</div>', unsafe_allow_html=True)
     if st.button("🆕 New Practice"):
         st.session_state.analysis_result = None
